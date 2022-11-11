@@ -35,12 +35,13 @@ func TestHandler(t *testing.T) {
 		pl   ProgressListener
 	}
 	tests := []struct {
-		name     string
-		setup    setup
-		args     args
-		want     []byte
-		wantErr  bool
-		wantVals map[string][]string
+		name      string
+		setup     setup
+		args      args
+		want      []byte
+		wantErr   bool
+		wantVals  map[string][]string
+		wantPanic bool
 	}{
 		{
 			name: "When the http request has a nil value it should let us know via an error",
@@ -53,23 +54,10 @@ func TestHandler(t *testing.T) {
 				wrt:  out,
 				pl:   nil,
 			},
-			want:     []byte{},
-			wantErr:  true,
-			wantVals: map[string][]string{},
-		},
-		{
-			name: "When the values map has a nil value it should let us know via an error",
-			setup: setup{
-				bdy: file,
-			},
-			args: args{
-				req:  &http.Request{},
-				vals: nil,
-				wrt:  out,
-				pl:   nil,
-			},
-			want:    []byte{},
-			wantErr: true,
+			want:      []byte{},
+			wantErr:   true,
+			wantVals:  map[string][]string{},
+			wantPanic: true,
 		},
 		{
 			name: "When the request has no multipart body",
@@ -104,6 +92,12 @@ func TestHandler(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if panErr := recover(); (panErr != nil) != tt.wantPanic {
+					t.Errorf("expected panic to be %v but got %v", tt.wantPanic, panErr)
+					return
+				}
+			}()
 			file.Seek(0, 0)
 			mpBody, ct, err := createMultipart(tt.setup.bdy, "body.txt")
 			if err != nil {
@@ -117,7 +111,17 @@ func TestHandler(t *testing.T) {
 				testReq = nil
 			}
 
-			err = Handler(testReq, tt.args.vals, tt.args.wrt, tt.args.pl)
+			binder, newErr := NewBinder(testReq, DefaultValuesBytesize)
+			if (newErr != nil) != tt.wantErr {
+				t.Errorf("wanted err to be %v but got %v\n", tt.wantErr, err)
+				return
+			}
+
+			if newErr != nil {
+				return
+			}
+
+			err = binder.Bind(tt.args.wrt, tt.args.pl)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Handler() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -135,8 +139,8 @@ func TestHandler(t *testing.T) {
 				return
 			}
 
-			if !reflect.DeepEqual(tt.args.vals, tt.wantVals) {
-				t.Errorf("Expected vals to be \n%+v\n but got \n%+v\n", tt.wantVals, tt.args.vals)
+			if !reflect.DeepEqual(binder.Values(), tt.wantVals) {
+				t.Errorf("Expected vals to be \n%+v\n but got \n%+v\n", tt.wantVals, binder.Values())
 			}
 		})
 	}
